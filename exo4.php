@@ -1,6 +1,6 @@
 <?php
 
-// PGCD version 1 : soustraction
+
 
 function pgcd_1($a, $b) {
     $a = abs($a);
@@ -17,7 +17,7 @@ function pgcd_1($a, $b) {
 }
 
 
-// PGCD version 2 : modulo
+
 
 function pgcd_2($a, $b) {
     $a = abs($a);
@@ -32,7 +32,7 @@ function pgcd_2($a, $b) {
 }
 
 
-// PGCD version 3 : récursive
+
 
 function pgcd_3($a, $b) {
     $a = abs($a);
@@ -45,7 +45,7 @@ function pgcd_3($a, $b) {
 }
 
 
-// Test des 3 fonctions
+
 
 $a = 48;
 $b = 18;
