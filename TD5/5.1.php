@@ -1,123 +1,261 @@
 <?php
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
+
+$limit = 10;
+$search = "";
+$data = [];
+$totalPages = 0;
+$totalRows = 0;
+$sort = "nom";
+$order = "DESC";
+$errors = [];
+ 
+
+$allowed_sorts = ["nom", "pays", "course", "temps"];
+if (isset($_GET['sort']) && in_array($_GET['sort'], $allowed_sorts)) {
+    $sort = $_GET['sort'];
+}
+ 
+if (isset($_GET['order'])) {
+    $tmp = strtoupper($_GET['order']);
+    if (in_array($tmp, ["ASC", "DESC"])) {
+        $order = $tmp;
+    }
+}
+ 
+
+$whereClause = "";
+$params = [];
+if (!empty($_GET['q'])) {
+    $search = trim($_GET['q']);
+    $whereClause = "WHERE nom LIKE :search OR pays LIKE :search OR course LIKE :search";
+    $params[':search'] = "%{$search}%";
+}
+ 
+
+$page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+$offset = ($page - 1) * $limit;
+ 
 
 try {
     $mysqlClient = new PDO(
-        'mysql:host=localhost;port=3306;dbname=dz;charset=utf8',
+        'mysql:host=localhost;dbname=dz;charset=utf8',
         'root',
-        ''
+        '',
+        [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
     );
 } catch (PDOException $e) {
-    die($e->getMessage());
+    die("Erreur de connexion : " . $e->getMessage());
 }
+ 
 
-$sortColumn = 'nom';
-$sortOrder = 'ASC';
-$errorMessage = '';
-
-if (isset($_GET['sort'])) {
-    $sortColumn = $_GET['sort'];
+$coursesList = $mysqlClient->query("SELECT DISTINCT course FROM `100` ORDER BY course ASC")->fetchAll(PDO::FETCH_COLUMN);
+ 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_result'])) {
+    $nom = trim($_POST['nom']);
+    $pays = strtoupper(trim($_POST['pays']));
+    $temps = trim($_POST['temps']);
+    $course = trim($_POST['course']);
+ 
+    if (strlen($pays) !== 3) {
+        $errors[] = "Le code pays doit contenir exactement 3 lettres.";
+    }
+    if (!is_numeric($temps)) {
+        $errors[] = "Le temps doit être un nombre.";
+    }
+    if (!in_array($course, $coursesList)) {
+        $errors[] = "La course sélectionnée est invalide.";
+    }
+ 
+    if (empty($errors)) {
+        $stmtInsert = $mysqlClient->prepare("INSERT INTO `100` (nom, pays, temps, course) VALUES (:nom, :pays, :temps, :course)");
+        $stmtInsert->execute([
+            ':nom' => $nom,
+            ':pays' => $pays,
+            ':temps' => $temps,
+            ':course' => $course
+        ]);
+       
+        header("Location: ".$_SERVER['PHP_SELF']);
+        exit;
+    }
 }
+ 
 
-if (isset($_GET['order'])) {
-    $sortOrder = $_GET['order'];
+$countSql = "SELECT COUNT(*) FROM `100` $whereClause";
+$stmtCount = $mysqlClient->prepare($countSql);
+foreach ($params as $k => $v) $stmtCount->bindValue($k, $v);
+$stmtCount->execute();
+$totalRows = (int)$stmtCount->fetchColumn();
+$totalPages = $totalRows > 0 ? (int)ceil($totalRows / $limit) : 1;
+ 
+
+$selectSql = "SELECT * FROM `100` $whereClause ORDER BY `$sort` $order LIMIT :limit OFFSET :offset";
+$stmt = $mysqlClient->prepare($selectSql);
+foreach ($params as $k => $v) $stmt->bindValue($k, $v);
+$stmt->bindValue(':limit', (int)$limit, PDO::PARAM_INT);
+$stmt->bindValue(':offset', (int)$offset, PDO::PARAM_INT);
+$stmt->execute();
+$data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+ 
+
+$ranks = [];
+if (!empty($data)) {
+    $coursesOnPage = array_unique(array_map(function($r){ return $r['course']; }, $data));
+    $inPlaceholders = [];
+    $inParams = [];
+    foreach ($coursesOnPage as $i => $c) {
+        $ph = ":c{$i}";
+        $inPlaceholders[] = $ph;
+        $inParams[$ph] = $c;
+    }
+    $inList = implode(", ", $inPlaceholders);
+    $allForCoursesSql = "SELECT id, course, temps FROM `100` WHERE course IN ($inList) ORDER BY course ASC, temps + 0 ASC";
+    $stmt2 = $mysqlClient->prepare($allForCoursesSql);
+    foreach ($inParams as $k => $v) $stmt2->bindValue($k, $v);
+    $stmt2->execute();
+    $all = $stmt2->fetchAll(PDO::FETCH_ASSOC);
+ 
+    $currentCourse = null;
+    $rank = 0;
+    foreach ($all as $row) {
+        if ($row['course'] !== $currentCourse) {
+            $currentCourse = $row['course'];
+            $rank = 1;
+        } else {
+            $rank++;
+        }
+        $ranks[$row['id']] = $rank;
+    }
 }
-
-$validColumns = ['nom', 'pays', 'course', 'temps'];
-$validOrders = ['ASC', 'DESC'];
-
-if (!in_array($sortColumn, $validColumns, true)) {
-    $errorMessage = 'Paramètre de tri inconnu — tri par défaut appliqué.';
-    $sortColumn = 'nom';
-}
-
-$query = $mysqlClient->prepare('SELECT * FROM `dz`.`100` ORDER BY ' . $sortColumn . ' ' . $sortOrder);
-$query->execute();
-$data = $query->fetchAll(PDO::FETCH_ASSOC);
+ 
 
 $mysqlClient = null;
-$dbh = null;
+ 
+
+function urlFor($overrides = []) {
+    $params = [
+        'q' => $_GET['q'] ?? '',
+        'page' => $_GET['page'] ?? 1,
+        'sort' => $_GET['sort'] ?? 'nom',
+        'order' => $_GET['order'] ?? 'DESC'
+    ];
+    foreach ($overrides as $k => $v) $params[$k] = $v;
+    $pairs = [];
+    foreach ($params as $k => $v) {
+        if ($v === '' || $v === null) continue;
+        $pairs[] = urlencode($k)."=".urlencode($v);
+    }
+    return $_SERVER['PHP_SELF'] . "?" . implode("&", $pairs);
+}
 ?>
-
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Résultats</title>
 <style>
-/* TON CSS PREMIUM — inchangé */
-body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: #121212;
-    color: #e0e0e0;
-    margin: 40px;
-}
-table {
-    border-collapse: collapse;
-    width: 100%;
-    max-width: 1000px;
-    margin: 0 auto;
-    background: #1e1e2f;
-    box-shadow: 0 8px 20px rgba(0,0,0,0.5);
-    border-radius: 12px;
-    overflow: hidden;
-}
-thead {
-    background: #29294d;
-    color: #ffffff;
-}
-thead th {
-    padding: 15px;
-    text-align: left;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.3s, color 0.3s;
-}
-thead th:hover {
-    background: #3f3fa5;
-    color: #fffacd;
-}
-tbody tr {
-    transition: background 0.3s;
-}
-tbody tr:nth-child(even) {
-    background: #1b1b2b;
-}
-tbody tr:hover {
-    background: #3f3fa5;
-    color: #ffffff;
-}
-td {
-    padding: 12px 15px;
-    border-bottom: 1px solid #2c2c3c;
-}
-a {
-    color: inherit;
-    text-decoration: none;
-    font-weight: bold;
-}
-a:hover {
-    color: #ffdd57;
-}
-th, td {
-    letter-spacing: 0.5px;
-}
+    table { border-collapse: collapse; width:100%; }
+    th, td { border: 1px solid #ccc; padding: 6px; text-align:left; }
+    th a { text-decoration: none; }
+    .pagination a { margin-right: 6px; }
 </style>
+</head>
+<body>
+ 
+<h2>Ajouter un résultat</h2>
+<?php if (!empty($errors)): ?>
+    <div style="color:red;">
+        <ul>
+        <?php foreach ($errors as $e) echo "<li>".htmlspecialchars($e)."</li>"; ?>
+        </ul>
+    </div>
+<?php endif; ?>
+<form method="post" action="">
+    <input type="text" name="nom" placeholder="Nom du coureur" required>
+    <input type="text" name="pays" placeholder="Pays (3 lettres)" maxlength="3" required>
+    <input type="text" name="temps" placeholder="Temps" required>
+    <select name="course" required>
+        <option value="">-- Sélectionner une course --</option>
+        <?php foreach ($coursesList as $c): ?>
+            <option value="<?= htmlspecialchars($c) ?>"><?= htmlspecialchars($c) ?></option>
+        <?php endforeach; ?>
+    </select>
+    <button type="submit" name="add_result">Ajouter</button>
+</form>
+<hr>
+ 
 
-<table border="1" cellpadding="8">
+<form method="get" action="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>">
+    <input type="text" name="q" placeholder="Recherche..." value="<?= htmlspecialchars($search) ?>">
+    <button type="submit">Rechercher</button>
+</form>
+ 
+
+<?php if (empty($data)): ?>
+    <p>Aucun résultat (page <?= $page ?> / <?= $totalPages ?>).</p>
+<?php else: ?>
+<table>
     <thead>
         <tr>
-            <th><a href="?sort=nom&order=<?php echo ($sortColumn === 'nom' && $sortOrder === 'ASC') ? 'DESC' : 'ASC'; ?>">Nom <?php echo ($sortColumn === 'nom') ? (($sortOrder === 'ASC') ? '↑' : '↓') : ''; ?></a></th>
-            <th><a href="?sort=pays&order=<?php echo ($sortColumn === 'pays' && $sortOrder === 'ASC') ? 'DESC' : 'ASC'; ?>">Pays <?php echo ($sortColumn === 'pays') ? (($sortOrder === 'ASC') ? '↑' : '↓') : ''; ?></a></th>
-            <th><a href="?sort=course&order=<?php echo ($sortColumn === 'course' && $sortOrder === 'ASC') ? 'DESC' : 'ASC'; ?>">Course <?php echo ($sortColumn === 'course') ? (($sortOrder === 'ASC') ? '↑' : '↓') : ''; ?></a></th>
-            <th><a href="?sort=temps&order=<?php echo ($sortColumn === 'temps' && $sortOrder === 'ASC') ? 'DESC' : 'ASC'; ?>">Temps <?php echo ($sortColumn === 'temps') ? (($sortOrder === 'ASC') ? '↑' : '↓') : ''; ?></a></th>
+            <th>
+                <?php $newOrder = ($sort == 'nom' && $order == 'DESC') ? 'ASC' : 'DESC'; ?>
+                <a href="<?= urlFor(['sort'=>'nom','order'=>$newOrder,'page'=>1]) ?>">Nom</a>
+                <?= $sort == 'nom' ? ($order == 'DESC' ? ' ▼' : ' ▲') : '' ?>
+            </th>
+            <th>
+                <?php $newOrder = ($sort == 'pays' && $order == 'DESC') ? 'ASC' : 'DESC'; ?>
+                <a href="<?= urlFor(['sort'=>'pays','order'=>$newOrder,'page'=>1]) ?>">Pays</a>
+                <?= $sort == 'pays' ? ($order == 'DESC' ? ' ▼' : ' ▲') : '' ?>
+            </th>
+            <th>
+                <?php $newOrder = ($sort == 'course' && $order == 'DESC') ? 'ASC' : 'DESC'; ?>
+                <a href="<?= urlFor(['sort'=>'course','order'=>$newOrder,'page'=>1]) ?>">Course</a>
+                <?= $sort == 'course' ? ($order == 'DESC' ? ' ▼' : ' ▲') : '' ?>
+            </th>
+            <th>
+                <?php $newOrder = ($sort == 'temps' && $order == 'DESC') ? 'ASC' : 'DESC'; ?>
+                <a href="<?= urlFor(['sort'=>'temps','order'=>$newOrder,'page'=>1]) ?>">Temps</a>
+                <?= $sort == 'temps' ? ($order == 'DESC' ? ' ▼' : ' ▲') : '' ?>
+            </th>
+            <th>Classement</th>
+            <th>Modifier</th>
         </tr>
     </thead>
-
     <tbody>
-        <?php foreach ($data as $value) { ?>
-        <tr>
-            <td><?= $value["nom"]; ?></td>
-            <td><?= $value["pays"]; ?></td>
-            <td><?= $value["course"]; ?></td>
-            <td><?= $value["temps"]; ?>s</td>
-        </tr>
-        <?php } ?>
+        <?php foreach ($data as $row): ?>
+            <tr>
+                <td><?= htmlspecialchars($row['nom']); ?></td>
+                <td><?= htmlspecialchars($row['pays']); ?></td>
+                <td><?= htmlspecialchars($row['course']); ?></td>
+                <td><?= htmlspecialchars($row['temps']); ?></td>
+                <td><?= isset($ranks[$row['id']]) ? (int)$ranks[$row['id']] : '-' ?></td>
+                <td><a href="edit.php?id=<?= urlencode($row['id']); ?>">Modifier</a></td>
+            </tr>
+        <?php endforeach; ?>
     </tbody>
 </table>
+<?php endif; ?>
+ 
+
+<div class="pagination" style="margin-top:10px;">
+    <?php
+    $start = max(1, $page - 3);
+    $end = min($totalPages, $page + 3);
+    if ($page > 1) {
+        echo '<a href="'.urlFor(['page'=>$page-1]).'">&laquo; Précédent</a>';
+    }
+    for ($i = $start; $i <= $end; $i++) {
+        if ($i == $page) {
+            echo "<strong>$i</strong> ";
+        } else {
+            echo '<a href="'.urlFor(['page'=>$i]).'">'.$i.'</a> ';
+        }
+    }
+    if ($page < $totalPages) {
+        echo '<a href="'.urlFor(['page'=>$page+1]).'">Suivant &raquo;</a>';
+    }
+    ?>
+</div>
+ 
+</body>
+</html>
