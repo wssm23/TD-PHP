@@ -35,7 +35,6 @@ if (!empty($_GET['q'])) {
 $page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
 $offset = ($page - 1) * $limit;
  
-
 try {
     $mysqlClient = new PDO(
         'mysql:host=localhost;dbname=dz;charset=utf8',
@@ -56,6 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_result'])) {
     $temps = trim($_POST['temps']);
     $course = trim($_POST['course']);
  
+   
     if (strlen($pays) !== 3) {
         $errors[] = "Le code pays doit contenir exactement 3 lettres.";
     }
@@ -74,13 +74,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_result'])) {
             ':temps' => $temps,
             ':course' => $course
         ]);
-       
+        
         header("Location: ".$_SERVER['PHP_SELF']);
         exit;
     }
 }
  
-
 $countSql = "SELECT COUNT(*) FROM `100` $whereClause";
 $stmtCount = $mysqlClient->prepare($countSql);
 foreach ($params as $k => $v) $stmtCount->bindValue($k, $v);
@@ -88,7 +87,6 @@ $stmtCount->execute();
 $totalRows = (int)$stmtCount->fetchColumn();
 $totalPages = $totalRows > 0 ? (int)ceil($totalRows / $limit) : 1;
  
-
 $selectSql = "SELECT * FROM `100` $whereClause ORDER BY `$sort` $order LIMIT :limit OFFSET :offset";
 $stmt = $mysqlClient->prepare($selectSql);
 foreach ($params as $k => $v) $stmt->bindValue($k, $v);
@@ -97,7 +95,6 @@ $stmt->bindValue(':offset', (int)$offset, PDO::PARAM_INT);
 $stmt->execute();
 $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
  
-
 $ranks = [];
 if (!empty($data)) {
     $coursesOnPage = array_unique(array_map(function($r){ return $r['course']; }, $data));
@@ -154,10 +151,150 @@ function urlFor($overrides = []) {
 <meta charset="utf-8">
 <title>Résultats</title>
 <style>
-    table { border-collapse: collapse; width:100%; }
-    th, td { border: 1px solid #ccc; padding: 6px; text-align:left; }
-    th a { text-decoration: none; }
-    .pagination a { margin-right: 6px; }
+   <style>
+<style>
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: linear-gradient(135deg, #ece9e6, #ffffff);
+    color: #333;
+    margin: 0;
+    padding: 20px;
+}
+
+
+h2 {
+    color: #2c3e50;
+    margin-bottom: 15px;
+    font-weight: 600;
+}
+
+
+form {
+    margin-bottom: 25px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+form input[type="text"],
+form select,
+form button {
+    padding: 10px 12px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+form input[type="text"]:focus,
+form select:focus {
+    border-color: #3498db;
+    outline: none;
+}
+
+form button {
+    background-color: #3498db;
+    color: white;
+    border: none;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+form button:hover {
+    background-color: #2980b9;
+}
+
+
+div[style*="color:red"] ul {
+    margin: 0 0 10px 0;
+    padding-left: 20px;
+}
+
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    background-color: white;
+    box-shadow: 0 3px 6px rgba(0,0,0,0.1);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+th, td {
+    padding: 12px 15px;
+    text-align: left;
+}
+
+th {
+    background-color: #3498db;
+    color: white;
+    font-weight: 600;
+}
+
+tr:nth-child(even) {
+    background-color: #f5f5f5;
+}
+
+tr:hover {
+    background-color: #d6eaf8;
+}
+
+th a {
+    color: white;
+    text-decoration: none;
+    display: inline-block;
+}
+
+th a:hover {
+    text-decoration: underline;
+}
+
+
+td a {
+    color: #3498db;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+td a:hover {
+    text-decoration: underline;
+}
+
+
+.pagination {
+    margin-top: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    align-items: center;
+}
+
+.pagination a {
+    display: inline-block;
+    padding: 6px 12px;
+    border-radius: 6px;
+    background-color: #ecf0f1;
+    color: #2c3e50;
+    text-decoration: none;
+    transition: 0.2s;
+}
+
+.pagination a:hover {
+    background-color: #3498db;
+    color: white;
+}
+
+.pagination strong {
+    padding: 6px 12px;
+    border-radius: 6px;
+    background-color: #3498db;
+    color: white;
+}
+</style>
+
+
+</style>
+
 </style>
 </head>
 <body>
@@ -236,7 +373,6 @@ function urlFor($overrides = []) {
 </table>
 <?php endif; ?>
  
-
 <div class="pagination" style="margin-top:10px;">
     <?php
     $start = max(1, $page - 3);
